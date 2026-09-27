@@ -13,12 +13,12 @@ RepoTimeMachine lets users inspect a public GitHub repository at different point
 - Lazily opens source files, READMEs, configuration files, and manifests.
 - Compares Version A ↕ Version B with added, removed, modified, and renamed files where GitHub can detect them.
 - Summarizes dependency changes across common manifest types.
-- Provides a safe historical preview only when the repository state contains a static HTML entry or README source.
-- Handles API rate limits, unavailable repositories, binary files, huge/truncated trees, and unsupported build-only projects with clear messages.
+- Handles API rate limits, unavailable repositories, binary files, huge/truncated trees, and unsupported project types with clear messages.
+- Keeps historical website/build execution disabled in this version; the app focuses on source exploration and comparison.
 
 ## Safety principles
 
-RepoTimeMachine **does not execute arbitrary repository code** in the main application environment. Static HTML preview is rendered in a sandboxed iframe with scripts removed. Build-based preview support should only be added with a separate isolated sandbox.
+RepoTimeMachine **does not execute arbitrary repository code** in the main application environment. Historical website/build preview is intentionally disabled in this version. Build-based preview support should only be added with a separate isolated sandbox.
 
 ## Architecture at a glance
 

@@ -17,7 +17,6 @@ import { DateJump } from './components/DateJump';
 import { ErrorCallout } from './components/ErrorCallout';
 import { FileExplorer } from './components/FileExplorer';
 import { FileViewer } from './components/FileViewer';
-import { PreviewPanel } from './components/PreviewPanel';
 import { RepositoryForm } from './components/RepositoryForm';
 import { Timeline } from './components/Timeline';
 import { getBlob, getBranches, getLatestCommitBeforeDate, getRepository, getTimeline, getTree, resolveCommit } from './lib/github';
@@ -257,7 +256,6 @@ export default function App() {
 
             <div className="lower-grid">
               <ComparePanel repo={coordinates} points={timeline?.points ?? []} current={selectedPoint} />
-              <PreviewPanel repo={coordinates} tree={tree} />
             </div>
           </>
         ) : !error ? (

@@ -311,6 +311,13 @@ export async function compareRefs(repo: RepoCoordinates, base: string, head: str
     repoPath(repo, `/compare/${encodePathPart(base)}...${encodePathPart(head)}`),
     DEFAULT_TTL
   );
+
+  // GitHub's compare response includes base_commit and a commits array.
+  // Some API responses do not include a head_commit field, so derive it safely.
+  const commits = raw.commits ?? [];
+  const baseCommit = raw.base_commit ?? raw.merge_base_commit ?? commits[0];
+  const headCommit = raw.head_commit ?? commits.at(-1) ?? raw.base_commit ?? raw.merge_base_commit;
+
   return {
     url: raw.url,
     htmlUrl: raw.html_url,
@@ -318,10 +325,25 @@ export async function compareRefs(repo: RepoCoordinates, base: string, head: str
     aheadBy: raw.ahead_by,
     behindBy: raw.behind_by,
     totalCommits: raw.total_commits,
-    baseCommit: mapCommit(raw.base_commit),
-    headCommit: mapCommit(raw.merge_base_commit?.sha === raw.head_commit.sha ? raw.head_commit : raw.head_commit),
+    baseCommit: mapCommitOrPlaceholder(baseCommit, base),
+    headCommit: mapCommitOrPlaceholder(headCommit, head),
     files: (raw.files ?? []).map(mapCompareFile),
     tooLarge: raw.files === undefined && raw.total_commits > 250
+  };
+}
+
+function mapCommitOrPlaceholder(raw: GitHubCommitResponse | undefined, ref: string): CommitInfo {
+  if (raw) return mapCommit(raw);
+  const now = new Date().toISOString();
+  return {
+    sha: ref,
+    shortSha: ref.slice(0, 7),
+    message: 'Reference resolved by GitHub compare API',
+    authorName: 'unknown',
+    authorDate: now,
+    committerDate: now,
+    url: '',
+    parents: []
   };
 }
 
@@ -427,9 +449,10 @@ type GitHubCompareResponse = {
   ahead_by: number;
   behind_by: number;
   total_commits: number;
-  base_commit: GitHubCommitResponse;
+  base_commit?: GitHubCommitResponse;
   merge_base_commit?: GitHubCommitResponse;
-  head_commit: GitHubCommitResponse;
+  head_commit?: GitHubCommitResponse;
+  commits?: GitHubCommitResponse[];
   files?: GitHubCompareFileResponse[];
 };
 

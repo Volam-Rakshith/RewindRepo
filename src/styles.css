@@ -258,7 +258,7 @@ select:focus {
 }
 
 .lower-grid {
-  grid-template-columns: minmax(440px, 1fr) minmax(380px, 0.8fr);
+  grid-template-columns: 1fr;
 }
 
 .branch-card,
@@ -514,15 +514,13 @@ select:focus {
 
 .file-explorer,
 .file-viewer,
-.compare-panel,
-.preview-panel {
+.compare-panel {
   min-height: 560px;
   padding: 20px;
 }
 
 .file-viewer,
-.compare-panel,
-.preview-panel {
+.compare-panel {
   overflow: hidden;
 }
 

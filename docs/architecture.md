@@ -81,11 +81,7 @@ Dependency summaries are derived by fetching changed manifests at both refs and 
 
 ## Preview model
 
-RepoTimeMachine does **not** run historical application builds in the browser. Preview support is intentionally conservative:
-
-- Static HTML entry (`index.html`, `public/index.html`, etc.) can be rendered in a sandboxed iframe after script and active content removal.
-- README files can be shown as source previews.
-- Framework/build-only projects are marked as requiring an isolated build sandbox and fall back to source exploration.
+RepoTimeMachine does **not** run historical application builds in the browser. Historical website preview is disabled in the current UI, so unsupported/build-only projects fall back to source exploration and comparison.
 
 Future build preview support should be implemented as a separate sandbox service with strict limits, filesystem isolation, no secrets, network controls, dependency cache boundaries, and disposable workers.
 
