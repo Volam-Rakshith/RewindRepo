@@ -18,6 +18,7 @@ export function ComparePanel({ repo, points, current }: Props) {
   const [head, setHead] = useState(defaultB);
   const [result, setResult] = useState<CompareResult | null>(null);
   const [dependencies, setDependencies] = useState<DependencyChange[]>([]);
+  const [dependencyFiles, setDependencyFiles] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ReturnType<typeof toAppError> | null>(null);
 
@@ -37,10 +38,12 @@ export function ComparePanel({ repo, points, current }: Props) {
     setLoading(true);
     setError(null);
     setDependencies([]);
+    setDependencyFiles([]);
     try {
       const compare = await compareRefs(repo, base, head);
       setResult(compare);
-      const depFiles = dependencyFilesFromCompare(compare.files).slice(0, 12);
+      const depFiles = dependencyFilesFromCompare(compare.files).slice(0, 40);
+      setDependencyFiles(depFiles);
       const depChanges = (
         await Promise.all(
           depFiles.map(async (file) => {
@@ -109,7 +112,7 @@ export function ComparePanel({ repo, points, current }: Props) {
             </a>
           </div>
           <FileChangeGroups files={result.files} />
-          <DependencySummary changes={dependencies} />
+          <DependencySummary changes={dependencies} dependencyFiles={dependencyFiles} />
         </div>
       ) : (
         <p className="empty-state">
@@ -148,15 +151,25 @@ function FileChangeGroups({ files }: { files: CompareResult['files'] }) {
   );
 }
 
-function DependencySummary({ changes }: { changes: DependencyChange[] }) {
+function DependencySummary({ changes, dependencyFiles }: { changes: DependencyChange[]; dependencyFiles: string[] }) {
   return (
     <div className="dependency-summary">
-      <h3>Dependency changes</h3>
+      <div className="dependency-heading">
+        <h3>Dependency changes</h3>
+        {dependencyFiles.length ? <span>{dependencyFiles.length} dependency file{dependencyFiles.length === 1 ? '' : 's'} checked</span> : null}
+      </div>
       {changes.length === 0 ? (
-        <p>No dependency manifest changes were detected in the compared files.</p>
+        dependencyFiles.length === 0 ? (
+          <p>No dependency manifest or lock files changed in this comparison.</p>
+        ) : (
+          <div className="dependency-empty-detail">
+            <p>Dependency files changed, but no package-level version changes were extracted.</p>
+            <small>Checked: {dependencyFiles.join(', ')}</small>
+          </div>
+        )
       ) : (
         <div className="dependency-table" role="table" aria-label="Dependency changes">
-          {changes.map((change) => (
+          {changes.slice(0, 250).map((change) => (
             <div key={`${change.file}:${change.packageName}`} role="row" className={change.type}>
               <span>{change.ecosystem}</span>
               <strong>{change.packageName}</strong>
@@ -166,6 +179,7 @@ function DependencySummary({ changes }: { changes: DependencyChange[] }) {
               <small>{change.file}</small>
             </div>
           ))}
+          {changes.length > 250 ? <p className="empty-state">Showing first 250 dependency changes.</p> : null}
         </div>
       )}
     </div>

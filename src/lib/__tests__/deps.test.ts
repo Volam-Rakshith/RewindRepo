@@ -22,6 +22,14 @@ describe('dependency parsing', () => {
     expect(deps['github.com/gin-gonic/gin']).toBe('v1.10.0');
   });
 
+  it('extracts npm package lock dependencies', () => {
+    const deps = parseDependencies(
+      'package-lock.json',
+      JSON.stringify({ packages: { '': {}, 'node_modules/react': { version: '19.0.0' } } })
+    );
+    expect(deps.react).toBe('19.0.0');
+  });
+
   it('reports added, removed, and changed dependencies', () => {
     const changes = diffDependencies(
       'package.json',

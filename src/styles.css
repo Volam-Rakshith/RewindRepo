@@ -706,8 +706,38 @@ select:focus {
   margin-top: 18px;
 }
 
+.dependency-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.dependency-heading h3 {
+  margin: 0;
+}
+
+.dependency-heading span,
+.dependency-empty-detail small {
+  color: var(--muted-2);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
 .dependency-summary p {
   color: var(--muted);
+}
+
+.dependency-empty-detail {
+  border: 1px solid rgba(139, 169, 214, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 12px;
+}
+
+.dependency-empty-detail p {
+  margin-bottom: 6px;
 }
 
 .dependency-table {

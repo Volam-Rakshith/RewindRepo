@@ -2,11 +2,18 @@ import type { CompareFile, DependencyChange } from '../types';
 
 const DEP_FILE_PATTERNS = [
   /(^|\/)package\.json$/,
+  /(^|\/)(package-lock|npm-shrinkwrap)\.json$/,
+  /(^|\/)pnpm-lock\.yaml$/,
+  /(^|\/)yarn\.lock$/,
+  /(^|\/)bun\.lock$/,
+  /(^|\/)deno\.lock$/,
   /(^|\/)requirements(-[\w.-]+)?\.txt$/,
   /(^|\/)pyproject\.toml$/,
+  /(^|\/)Pipfile(\.lock)?$/,
   /(^|\/)go\.mod$/,
   /(^|\/)Cargo\.toml$/,
-  /(^|\/)Gemfile$/,
+  /(^|\/)Gemfile(\.lock)?$/,
+  /(^|\/)composer\.(json|lock)$/,
   /(^|\/)pom\.xml$/,
   /(^|\/)build\.gradle(\.kts)?$/
 ];
@@ -21,7 +28,7 @@ export function dependencyFilesFromCompare(files: CompareFile[]): string[] {
     if (isDependencyFile(file.filename)) paths.add(file.filename);
     if (file.previousFilename && isDependencyFile(file.previousFilename)) paths.add(file.previousFilename);
   }
-  return [...paths];
+  return [...paths].sort((a, b) => a.localeCompare(b));
 }
 
 export function diffDependencies(file: string, beforeText: string | null, afterText: string | null): DependencyChange[] {
@@ -50,11 +57,21 @@ export function diffDependencies(file: string, beforeText: string | null, afterT
 export function parseDependencies(file: string, text: string): Record<string, string> {
   if (!text.trim()) return {};
   if (/(^|\/)package\.json$/.test(file)) return parsePackageJson(text);
+  if (/(^|\/)(package-lock|npm-shrinkwrap)\.json$/.test(file)) return parsePackageLock(text);
+  if (/(^|\/)pnpm-lock\.yaml$/.test(file)) return parsePnpmLock(text);
+  if (/(^|\/)yarn\.lock$/.test(file)) return parseYarnLock(text);
+  if (/(^|\/)bun\.lock$/.test(file)) return parseBunLock(text);
+  if (/(^|\/)deno\.lock$/.test(file)) return parseDenoLock(text);
   if (/(^|\/)requirements(-[\w.-]+)?\.txt$/.test(file)) return parseRequirements(text);
+  if (/(^|\/)pyproject\.toml$/.test(file)) return parsePyprojectToml(text);
+  if (/(^|\/)Pipfile$/.test(file)) return parsePipfile(text);
+  if (/(^|\/)Pipfile\.lock$/.test(file)) return parsePipfileLock(text);
   if (/(^|\/)go\.mod$/.test(file)) return parseGoMod(text);
   if (/(^|\/)Cargo\.toml$/.test(file)) return parseCargoToml(text);
-  if (/(^|\/)pyproject\.toml$/.test(file)) return parsePyprojectToml(text);
   if (/(^|\/)Gemfile$/.test(file)) return parseGemfile(text);
+  if (/(^|\/)Gemfile\.lock$/.test(file)) return parseGemfileLock(text);
+  if (/(^|\/)composer\.json$/.test(file)) return parseComposerJson(text);
+  if (/(^|\/)composer\.lock$/.test(file)) return parseComposerLock(text);
   if (/(^|\/)pom\.xml$/.test(file)) return parsePom(text);
   if (/(^|\/)build\.gradle(\.kts)?$/.test(file)) return parseGradle(text);
   return {};
@@ -62,13 +79,146 @@ export function parseDependencies(file: string, text: string): Record<string, st
 
 function parsePackageJson(text: string): Record<string, string> {
   try {
-    const json = JSON.parse(text) as Record<string, Record<string, string> | undefined>;
+    const json = JSON.parse(text) as Record<string, unknown>;
     return {
       ...normalizeRecord(json.dependencies),
       ...prefixRecord(normalizeRecord(json.devDependencies), 'dev:'),
       ...prefixRecord(normalizeRecord(json.peerDependencies), 'peer:'),
-      ...prefixRecord(normalizeRecord(json.optionalDependencies), 'optional:')
+      ...prefixRecord(normalizeRecord(json.optionalDependencies), 'optional:'),
+      ...prefixRecord(normalizeRecord(json.overrides), 'override:'),
+      ...prefixRecord(normalizeRecord(json.resolutions), 'resolution:')
     };
+  } catch {
+    return {};
+  }
+}
+
+function parsePackageLock(text: string): Record<string, string> {
+  try {
+    const json = JSON.parse(text) as {
+      packages?: Record<string, { version?: string }>;
+      dependencies?: Record<string, { version?: string }>;
+    };
+    const deps: Record<string, string> = {};
+
+    if (json.packages) {
+      for (const [path, meta] of Object.entries(json.packages)) {
+        if (!path || !meta?.version) continue;
+        const name = packageNameFromNodeModulesPath(path);
+        if (name) deps[name] = meta.version;
+      }
+    }
+
+    if (json.dependencies) {
+      collectNpmLockDependencies(json.dependencies, deps);
+    }
+
+    return deps;
+  } catch {
+    return {};
+  }
+}
+
+function collectNpmLockDependencies(
+  dependencies: Record<string, unknown>,
+  deps: Record<string, string>,
+  prefix = ''
+): void {
+  for (const [name, rawMeta] of Object.entries(dependencies)) {
+    if (!rawMeta || typeof rawMeta !== 'object') continue;
+    const meta = rawMeta as { version?: unknown; dependencies?: Record<string, unknown> };
+    const packageName = prefix ? `${prefix}>${name}` : name;
+    if (typeof meta.version === 'string') deps[packageName] = meta.version;
+    if (meta.dependencies) collectNpmLockDependencies(meta.dependencies, deps, packageName);
+  }
+}
+
+function packageNameFromNodeModulesPath(path: string): string | null {
+  const parts = path.split('/');
+  const index = parts.lastIndexOf('node_modules');
+  if (index === -1) return null;
+  const first = parts[index + 1];
+  if (!first) return null;
+  if (first.startsWith('@')) {
+    const second = parts[index + 2];
+    return second ? `${first}/${second}` : null;
+  }
+  return first;
+}
+
+function parsePnpmLock(text: string): Record<string, string> {
+  const deps: Record<string, string> = {};
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim().replace(/^['"]|['"]$/g, '').replace(/:$/, '');
+    if (!trimmed || trimmed.startsWith('#') || trimmed.includes(' ') || !trimmed.includes('@')) continue;
+    const parsed = parseLockKey(trimmed.replace(/^\//, ''));
+    if (parsed) deps[parsed.name] = parsed.version;
+  }
+  return deps;
+}
+
+function parseYarnLock(text: string): Record<string, string> {
+  const deps: Record<string, string> = {};
+  let pendingNames: string[] = [];
+
+  for (const line of text.split('\n')) {
+    if (line && !line.startsWith(' ') && line.trim().endsWith(':')) {
+      pendingNames = line
+        .trim()
+        .replace(/:$/, '')
+        .split(',')
+        .map((entry) => parseLockKey(entry.trim().replace(/^['"]|['"]$/g, ''))?.name)
+        .filter(Boolean) as string[];
+      continue;
+    }
+
+    const version = line.trim().match(/^version\s+['"]?([^'"]+)['"]?$/)?.[1];
+    if (version && pendingNames.length) {
+      for (const name of pendingNames) deps[name] = version;
+      pendingNames = [];
+    }
+  }
+
+  return deps;
+}
+
+function parseLockKey(raw: string): { name: string; version: string } | null {
+  const cleaned = raw.replace(/^npm:/, '').replace(/\(.+\)$/, '');
+  const atIndex = cleaned.startsWith('@') ? cleaned.indexOf('@', 1) : cleaned.indexOf('@');
+  if (atIndex <= 0) return null;
+  const name = cleaned.slice(0, atIndex);
+  const spec = cleaned.slice(atIndex + 1).replace(/^npm:/, '');
+  const version = spec.match(/\d+\.\d+\.\d+[^/)]*/)?.[0] ?? spec;
+  if (!name || !version || version.startsWith('^') || version.startsWith('~')) return null;
+  return { name, version };
+}
+
+function parseBunLock(text: string): Record<string, string> {
+  try {
+    const json = JSON.parse(text) as Record<string, unknown>;
+    const deps: Record<string, string> = {};
+    const packages = json.packages as Record<string, unknown> | undefined;
+    if (packages) {
+      for (const [name, meta] of Object.entries(packages)) {
+        if (Array.isArray(meta) && typeof meta[0] === 'string') deps[name] = meta[0];
+        if (meta && typeof meta === 'object' && 'version' in meta) deps[name] = String((meta as { version: unknown }).version);
+      }
+    }
+    return deps;
+  } catch {
+    return {};
+  }
+}
+
+function parseDenoLock(text: string): Record<string, string> {
+  try {
+    const json = JSON.parse(text) as { npm?: Record<string, string> };
+    const deps: Record<string, string> = {};
+    for (const [key, value] of Object.entries(json.npm ?? {})) {
+      const parsed = parseLockKey(key);
+      if (parsed) deps[parsed.name] = parsed.version || value;
+    }
+    return deps;
   } catch {
     return {};
   }
@@ -128,6 +278,39 @@ function parsePyprojectToml(text: string): Record<string, string> {
   return deps;
 }
 
+function parsePipfile(text: string): Record<string, string> {
+  const deps: Record<string, string> = {};
+  let inDeps = false;
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (/^\[.*\]$/.test(trimmed)) {
+      inDeps = /^\[(packages|dev-packages)\]$/.test(trimmed);
+      continue;
+    }
+    if (!inDeps || !trimmed || trimmed.startsWith('#')) continue;
+    const match = trimmed.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.+)$/);
+    if (match) deps[match[1].toLowerCase()] = match[2].replace(/["']/g, '').trim();
+  }
+  return deps;
+}
+
+function parsePipfileLock(text: string): Record<string, string> {
+  try {
+    const json = JSON.parse(text) as Record<string, Record<string, { version?: string }> | undefined>;
+    return {
+      ...normalizePipfileLockRecord(json.default),
+      ...prefixRecord(normalizePipfileLockRecord(json.develop), 'dev:')
+    };
+  } catch {
+    return {};
+  }
+}
+
+function normalizePipfileLockRecord(record: Record<string, { version?: string }> | undefined): Record<string, string> {
+  if (!record) return {};
+  return Object.fromEntries(Object.entries(record).map(([key, value]) => [key, value.version ?? '*']));
+}
+
 function parseGemfile(text: string): Record<string, string> {
   const deps: Record<string, string> = {};
   for (const line of text.split('\n')) {
@@ -135,6 +318,49 @@ function parseGemfile(text: string): Record<string, string> {
     if (match) deps[match[1]] = match[2] ?? '*';
   }
   return deps;
+}
+
+function parseGemfileLock(text: string): Record<string, string> {
+  const deps: Record<string, string> = {};
+  let inSpecs = false;
+  for (const line of text.split('\n')) {
+    if (line.trim() === 'specs:') {
+      inSpecs = true;
+      continue;
+    }
+    if (inSpecs && /^[A-Z]/.test(line)) inSpecs = false;
+    if (!inSpecs) continue;
+    const match = line.trim().match(/^([A-Za-z0-9_.-]+) \(([^)]+)\)/);
+    if (match) deps[match[1]] = match[2];
+  }
+  return deps;
+}
+
+function parseComposerJson(text: string): Record<string, string> {
+  try {
+    const json = JSON.parse(text) as Record<string, unknown>;
+    return {
+      ...normalizeRecord(json.require),
+      ...prefixRecord(normalizeRecord(json['require-dev']), 'dev:')
+    };
+  } catch {
+    return {};
+  }
+}
+
+function parseComposerLock(text: string): Record<string, string> {
+  try {
+    const json = JSON.parse(text) as Record<string, Array<{ name?: string; version?: string }> | undefined>;
+    const deps: Record<string, string> = {};
+    for (const key of ['packages', 'packages-dev']) {
+      for (const pkg of json[key] ?? []) {
+        if (pkg.name && pkg.version) deps[key === 'packages-dev' ? `dev:${pkg.name}` : pkg.name] = pkg.version;
+      }
+    }
+    return deps;
+  } catch {
+    return {};
+  }
 }
 
 function parsePom(text: string): Record<string, string> {
@@ -156,9 +382,13 @@ function parseGradle(text: string): Record<string, string> {
   return deps;
 }
 
-function normalizeRecord(record: Record<string, string> | undefined): Record<string, string> {
-  if (!record || typeof record !== 'object') return {};
-  return Object.fromEntries(Object.entries(record).filter(([, value]) => typeof value === 'string'));
+function normalizeRecord(record: unknown): Record<string, string> {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return {};
+  return Object.fromEntries(
+    Object.entries(record as Record<string, unknown>)
+      .filter(([, value]) => typeof value === 'string')
+      .map(([key, value]) => [key, String(value)])
+  );
 }
 
 function prefixRecord(record: Record<string, string>, prefix: string): Record<string, string> {
@@ -166,11 +396,13 @@ function prefixRecord(record: Record<string, string>, prefix: string): Record<st
 }
 
 function ecosystemFor(file: string): string {
-  if (/(^|\/)package\.json$/.test(file)) return 'npm';
-  if (/requirements|pyproject/.test(file)) return 'python';
+  if (/(^|\/)(package|package-lock|npm-shrinkwrap)\.json$|pnpm-lock\.yaml$|yarn\.lock$|bun\.lock$/.test(file)) return 'npm';
+  if (/requirements|pyproject|Pipfile/.test(file)) return 'python';
   if (/go\.mod$/.test(file)) return 'go';
   if (/Cargo\.toml$/.test(file)) return 'rust';
-  if (/Gemfile$/.test(file)) return 'ruby';
+  if (/Gemfile/.test(file)) return 'ruby';
+  if (/composer\.(json|lock)$/.test(file)) return 'php';
   if (/pom\.xml$|gradle/.test(file)) return 'jvm';
+  if (/deno\.lock$/.test(file)) return 'deno';
   return 'unknown';
 }
